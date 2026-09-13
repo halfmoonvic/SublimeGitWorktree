@@ -9,7 +9,6 @@ import sublime_plugin
 
 GIT_TIMEOUT = 10
 
-
 class GitError(Exception):
     def __init__(self, message, stderr=""):
         Exception.__init__(self, message)
@@ -74,6 +73,15 @@ def _pretty_path(path):
 
 def _link(url, text):
     return '<a href="{}">{}</a>'.format(url, html.escape(text))
+
+
+def _annotation(tree, is_current=False):
+    # The kind badge would mark the current worktree more prominently, but its
+    # container paints a background on every row, including unmarked ones.
+    parts = [x for x in (tree.flags, tree.label) if x]
+    if is_current:
+        parts.append("●")
+    return "  ".join(parts)
 
 
 def _same_path(a, b):
@@ -182,11 +190,9 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
         items = []
         selected = -1
         for i, tree in enumerate(trees):
-            name = tree.name
-            if _same_path(tree.path, current):
+            is_current = _same_path(tree.path, current)
+            if is_current:
                 selected = i
-                name = "> " + name
-            trigger = " ".join(x for x in (name, tree.label) if x)
             details = _link(
                 sublime.command_url("open_dir", {"dir": tree.path}),
                 _pretty_path(tree.path),
@@ -198,7 +204,9 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
                     ),
                     "[delete]",
                 )
-            items.append(sublime.QuickPanelItem(trigger, details, tree.flags))
+            items.append(sublime.QuickPanelItem(
+                tree.name, details, _annotation(tree, is_current)
+            ))
         self.window.show_quick_panel(
             items,
             lambda index, event=None: self._on_done(trees, index, event),
@@ -276,12 +284,13 @@ class GitWorktreeRemoveCommand(sublime_plugin.WindowCommand):
     def _show(self, trees):
         items = []
         for tree in trees:
-            trigger = " ".join(x for x in (tree.name, tree.label) if x)
             details = _link(
                 sublime.command_url("open_dir", {"dir": tree.path}),
                 _pretty_path(tree.path),
             )
-            items.append(sublime.QuickPanelItem(trigger, details, tree.flags))
+            items.append(sublime.QuickPanelItem(
+                tree.name, details, _annotation(tree)
+            ))
 
         def on_done(index):
             if index != -1:
