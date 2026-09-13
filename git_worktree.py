@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import subprocess
 import threading
 
@@ -11,6 +12,16 @@ GIT_TIMEOUT = 10
 
 # Resolved against the active color scheme, so it tracks the user's theme.
 DANGER = "var(--redish)"
+
+SETTINGS = "git_worktree.sublime-settings"
+DEFAULT_PATH = "../{name}"
+
+BAD_CHARS = re.compile('[\x00-\x1f<>:"|?*\\\\]')
+RESERVED = {
+    "con", "prn", "aux", "nul",
+    "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+    "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+}
 
 
 class GitError(Exception):
@@ -75,6 +86,44 @@ def _pretty_path(path):
     if os.path.normcase(full).startswith(home):
         return "~" + os.sep + full[len(home):]
     return full
+
+
+def _dir_name(name):
+    # A branch may contain "/", but using it in the directory name would nest the
+    # worktree a level deeper, so the two names deliberately differ.
+    return name.replace("/", "-")
+
+
+def _name_error(name):
+    if not name or not name.strip():
+        return "Name cannot be empty"
+    if name != name.strip():
+        return "Name cannot have leading or trailing spaces"
+    directory = _dir_name(name)
+    if BAD_CHARS.search(directory):
+        return "Name contains an invalid character"
+    if directory in (".", ".."):
+        return "Invalid name"
+    if directory.lower() in RESERVED:
+        return 'Name "{}" is reserved on Windows'.format(directory)
+    return None
+
+
+def _target_path(name, main_path, template):
+    project = _name_of(main_path)
+    try:
+        path = template.format(name=_dir_name(name), project=project)
+    except (KeyError, IndexError):
+        # An unknown placeholder in user settings would otherwise raise here.
+        path = DEFAULT_PATH.format(name=_dir_name(name), project=project)
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(main_path, path)
+    return os.path.normpath(path)
+
+
+def _occupied(path):
+    return os.path.isdir(path) and bool(os.listdir(path))
 
 
 def _link(url, text, color=None):
@@ -357,4 +406,134 @@ class GitWorktreeRemoveCommand(sublime_plugin.WindowCommand):
             "Force remove",
         ):
             self._run(path, name, cwd, force=True)
+
+
+def _current_branch(cwd):
+    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd).strip()
+    return "HEAD" if branch == "HEAD" else branch
+
+
+class GitWorktreeAddCommand(sublime_plugin.WindowCommand):
+    def is_enabled(self):
+        return bool(self.window.folders())
+
+    def run(self, name=None, base=None):
+        folders = self.window.folders()
+        if not folders:
+            return
+        cwd = folders[0]
+        if name:
+            self._start(name, base, cwd)
+            return
+        # The panel is still up when this runs from a link in a quick panel row.
+        self.window.run_command("hide_overlay")
+        self._prompt(base, cwd)
+
+    def _status(self, message):
+        sublime.set_timeout(lambda: self.window.status_message(message), 0)
+
+    def _template(self):
+        template = sublime.load_settings(SETTINGS).get("worktree_path", DEFAULT_PATH)
+        return template if isinstance(template, str) else DEFAULT_PATH
+
+    def _prompt(self, base, cwd):
+        def collect():
+            try:
+                main_path = _main_worktree_path(cwd)
+            except GitError as err:
+                self._status(err.message)
+                return
+            sublime.set_timeout(lambda: show(main_path), 0)
+
+        def show(main_path):
+            template = self._template()
+
+            def on_change(text):
+                text = text.strip()
+                if not text:
+                    self.window.status_message("")
+                    return
+                error = _name_error(text)
+                if error:
+                    self.window.status_message(error)
+                else:
+                    # Show where it will land before the user commits to it.
+                    self.window.status_message(
+                        _pretty_path(_target_path(text, main_path, template))
+                    )
+
+            def on_done(text):
+                self.window.status_message("")
+                self._start(text.strip(), base, cwd)
+
+            self.window.show_input_panel(
+                "New worktree name:", "", on_done, on_change, None
+            )
+
+        thread = threading.Thread(target=collect)
+        thread.daemon = True
+        thread.start()
+
+    def _start(self, name, base, cwd):
+        error = _name_error(name)
+        if error:
+            self._status(error)
+            return
+
+        def work():
+            try:
+                _git(["check-ref-format", "--branch", name], cwd)
+            except GitError:
+                self._status('"{}" is not a valid branch name'.format(name))
+                return
+            try:
+                main_path = _main_worktree_path(cwd)
+                ref = base or _current_branch(cwd)
+            except GitError as err:
+                self._status(err.message)
+                return
+
+            path = _target_path(name, main_path, self._template())
+            if _occupied(path):
+                self._status("{} already exists".format(_pretty_path(path)))
+                return
+            self._add(name, path, ref, cwd, new_branch=True)
+
+        thread = threading.Thread(target=work)
+        thread.daemon = True
+        thread.start()
+
+    def _add(self, name, path, ref, cwd, new_branch):
+        if new_branch:
+            args = ["worktree", "add", "-b", name, path, ref]
+        else:
+            # Checking out an existing branch: it names itself, there is no base.
+            args = ["worktree", "add", path, name]
+        try:
+            _git(args, cwd)
+        except GitError as err:
+            if new_branch and "already exists" in err.stderr:
+                sublime.set_timeout(
+                    lambda: self._confirm_checkout(name, path, ref, cwd), 0
+                )
+            else:
+                self._status(err.message)
+            return
+        self._status('Created worktree "{}"'.format(name))
+        sublime.set_timeout(lambda: _switch_to(self.window, path), 0)
+
+    def _confirm_checkout(self, name, path, ref, cwd):
+        if not sublime.ok_cancel_dialog(
+            'Branch "{}" already exists.\n\n'
+            "Create the worktree from that existing branch instead?".format(name),
+            "Use existing",
+        ):
+            return
+
+        def work():
+            self._add(name, path, ref, cwd, new_branch=False)
+
+        thread = threading.Thread(target=work)
+        thread.daemon = True
+        thread.start()
 

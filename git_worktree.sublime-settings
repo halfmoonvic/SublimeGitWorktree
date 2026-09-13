@@ -1,0 +1,18 @@
+{
+    // Where "Git Worktree: Add" puts a new worktree.
+    //
+    //   {name}    the name you typed, with "/" replaced by "-"
+    //   {project} the directory name of the main worktree
+    //
+    // Relative paths resolve against the main worktree, not the folder you
+    // happen to have open, so worktrees land in the same place either way.
+    // "~" is expanded.
+    //
+    // Examples, for a main worktree at ~/codes/myproject and the name "feature-auth":
+    //
+    //   "../{name}"                    ~/codes/feature-auth
+    //   "../worktrees/{name}"          ~/codes/worktrees/feature-auth
+    //   "~/worktrees/{project}/{name}" ~/worktrees/myproject/feature-auth
+    //   "../{project}-{name}"          ~/codes/myproject-feature-auth
+    "worktree_path": "../{name}"
+}

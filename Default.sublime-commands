@@ -4,6 +4,10 @@
         "command": "git_worktree_switch"
     },
     {
+        "caption": "Git Worktree: Add",
+        "command": "git_worktree_add"
+    },
+    {
         "caption": "Git Worktree: Remove",
         "command": "git_worktree_remove"
     }
