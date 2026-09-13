@@ -9,6 +9,10 @@ import sublime_plugin
 
 GIT_TIMEOUT = 10
 
+# Resolved against the active color scheme, so it tracks the user's theme.
+DANGER = "var(--redish)"
+
+
 class GitError(Exception):
     def __init__(self, message, stderr=""):
         Exception.__init__(self, message)
@@ -71,8 +75,9 @@ def _pretty_path(path):
     return full
 
 
-def _link(url, text):
-    return '<a href="{}">{}</a>'.format(url, html.escape(text))
+def _link(url, text, color=None):
+    style = ' style="color: {}"'.format(color) if color else ""
+    return '<a href="{}"{}>{}</a>'.format(url, style, html.escape(text))
 
 
 def _annotation(tree, is_current=False):
@@ -203,6 +208,7 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
                         "git_worktree_remove", {"path": tree.path}
                     ),
                     "[delete]",
+                    DANGER,
                 )
             items.append(sublime.QuickPanelItem(
                 tree.name, details, _annotation(tree, is_current)
