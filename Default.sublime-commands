@@ -1,0 +1,6 @@
+[
+    {
+        "caption": "Git: Switch Worktree",
+        "command": "switch_worktree"
+    }
+]
