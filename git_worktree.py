@@ -386,25 +386,27 @@ class GitWorktreeRemoveCommand(sublime_plugin.WindowCommand):
         self._run(path, name, cwd, force=False)
 
     def _run(self, path, name, cwd, force):
-        def work():
-            args = ["worktree", "remove"]
-            if force:
-                # git requires -f twice to drop a locked worktree.
-                args += ["--force", "--force"]
-            args.append(path)
-            try:
-                _git(args, cwd)
-            except GitError as err:
-                if not force and _needs_force(err.stderr):
-                    sublime.set_timeout(lambda: self._confirm_force(path, name, cwd), 0)
-                else:
-                    self._status(err.message)
-                return
-            self._status('Removed worktree "{}"'.format(name))
-
-        thread = threading.Thread(target=work)
+        thread = threading.Thread(
+            target=self._remove, args=(path, name, cwd, force)
+        )
         thread.daemon = True
         thread.start()
+
+    def _remove(self, path, name, cwd, force):
+        args = ["worktree", "remove"]
+        if force:
+            # git requires -f twice to drop a locked worktree.
+            args += ["--force", "--force"]
+        args.append(path)
+        try:
+            _git(args, cwd)
+        except GitError as err:
+            if not force and _needs_force(err.stderr):
+                sublime.set_timeout(lambda: self._confirm_force(path, name, cwd), 0)
+            else:
+                self._status(err.message)
+            return
+        self._status('Removed worktree "{}"'.format(name))
 
     def _confirm_force(self, path, name, cwd):
         if sublime.ok_cancel_dialog(
