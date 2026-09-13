@@ -1,3 +1,4 @@
+import html
 import os
 import subprocess
 import threading
@@ -53,6 +54,22 @@ def _git(args, cwd):
     if proc.returncode != 0:
         raise GitError(_first_line(err) or "git failed", err)
     return out
+
+
+def _pretty_path(path):
+    # git reports forward slashes on Windows while expanduser yields backslashes;
+    # normalise both sides so the prefix matches and the result stays consistent.
+    if not path:
+        return path
+    home = os.path.normcase(os.path.normpath(os.path.expanduser("~"))) + os.sep
+    full = os.path.normpath(path)
+    if os.path.normcase(full).startswith(home):
+        return "~" + os.sep + full[len(home):]
+    return full
+
+
+def _link(url, text):
+    return '<a href="{}">{}</a>'.format(url, html.escape(text))
 
 
 def _same_path(a, b):
@@ -166,7 +183,11 @@ class SwitchWorktreeCommand(sublime_plugin.WindowCommand):
                 selected = i
                 name = "> " + name
             trigger = " ".join(x for x in (name, tree.label) if x)
-            items.append([trigger, tree.path])
+            details = _link(
+                sublime.command_url("open_dir", {"dir": tree.path}),
+                _pretty_path(tree.path),
+            )
+            items.append(sublime.QuickPanelItem(trigger, details, tree.flags))
         self.window.show_quick_panel(
             items, lambda index: self._on_done(trees, index), 0, selected
         )
