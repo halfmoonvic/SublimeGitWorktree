@@ -305,7 +305,9 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
             self.window.run_command("git_worktree_remove", {"path": tree.path})
             return
         if tree.prunable:
-            self._status("Worktree is prunable; its directory is gone")
+            # There is no directory left to switch to, so removing the stale
+            # entry is the only thing this row can usefully do.
+            self.window.run_command("git_worktree_remove", {"path": tree.path})
             return
         _switch_to(self.window, tree.path)
 
