@@ -56,6 +56,10 @@ def _git(args, cwd):
     return out
 
 
+def _name_of(path):
+    return os.path.basename(path.rstrip("/\\")) or path
+
+
 def _pretty_path(path):
     # git reports forward slashes on Windows while expanduser yields backslashes;
     # normalise both sides so the prefix matches and the result stays consistent.
@@ -92,7 +96,7 @@ class Worktree(object):
 
     @property
     def name(self):
-        return os.path.basename(self.path.rstrip("/\\")) or self.path
+        return _name_of(self.path)
 
     @property
     def label(self):
@@ -187,15 +191,28 @@ class SwitchWorktreeCommand(sublime_plugin.WindowCommand):
                 sublime.command_url("open_dir", {"dir": tree.path}),
                 _pretty_path(tree.path),
             )
+            if not _remove_blocker(tree, current):
+                details += "  " + _link(
+                    sublime.command_url(
+                        "git_worktree_remove", {"path": tree.path}
+                    ),
+                    "[delete]",
+                )
             items.append(sublime.QuickPanelItem(trigger, details, tree.flags))
         self.window.show_quick_panel(
-            items, lambda index: self._on_done(trees, index), 0, selected
+            items,
+            lambda index, event=None: self._on_done(trees, index, event),
+            sublime.WANT_EVENT,
+            selected,
         )
 
-    def _on_done(self, trees, index):
+    def _on_done(self, trees, index, event=None):
         if index == -1:
             return
         tree = trees[index]
+        if (event or {}).get("modifier_keys", {}).get("shift"):
+            self.window.run_command("git_worktree_remove", {"path": tree.path})
+            return
         if tree.prunable:
             self._status("Worktree is prunable; its directory is gone")
             return
@@ -205,3 +222,108 @@ class SwitchWorktreeCommand(sublime_plugin.WindowCommand):
         first["path"] = tree.path
         data["folders"] = [first] + list(folders[1:])
         self.window.set_project_data(data)
+
+
+def _remove_blocker(tree, current):
+    if tree.is_main:
+        return "Cannot remove the main worktree"
+    if current and _same_path(tree.path, current):
+        return "Cannot remove the current worktree"
+    return None
+
+
+def _needs_force(stderr):
+    return "use --force" in stderr or "locked working tree" in stderr
+
+
+class GitWorktreeRemoveCommand(sublime_plugin.WindowCommand):
+    def is_enabled(self):
+        return bool(self.window.folders())
+
+    def run(self, path=None):
+        folders = self.window.folders()
+        if not folders:
+            return
+        cwd = folders[0]
+        if path:
+            # The link fires while the panel is still up; close it so the dialog
+            # is not stacked behind an overlay.
+            self.window.run_command("hide_overlay")
+            self._start(path, cwd)
+            return
+        self._pick(cwd)
+
+    def _status(self, message):
+        sublime.set_timeout(lambda: self.window.status_message(message), 0)
+
+    def _pick(self, cwd):
+        def collect():
+            try:
+                trees = _parse_worktrees(_git(["worktree", "list", "--porcelain"], cwd))
+            except GitError as err:
+                self._status(err.message)
+                return
+            removable = [t for t in trees if not _remove_blocker(t, cwd)]
+            if not removable:
+                self._status("No removable worktrees")
+                return
+            sublime.set_timeout(lambda: self._show(removable), 0)
+
+        thread = threading.Thread(target=collect)
+        thread.daemon = True
+        thread.start()
+
+    def _show(self, trees):
+        items = []
+        for tree in trees:
+            trigger = " ".join(x for x in (tree.name, tree.label) if x)
+            details = _link(
+                sublime.command_url("open_dir", {"dir": tree.path}),
+                _pretty_path(tree.path),
+            )
+            items.append(sublime.QuickPanelItem(trigger, details, tree.flags))
+
+        def on_done(index):
+            if index != -1:
+                self._start(trees[index].path, self.window.folders()[0])
+
+        self.window.show_quick_panel(items, on_done, 0, -1, placeholder="Remove worktree")
+
+    def _start(self, path, cwd):
+        name = _name_of(path)
+        if not sublime.ok_cancel_dialog(
+            'Remove worktree "{}"?\n\n{}'.format(name, _pretty_path(path)),
+            "Remove",
+        ):
+            return
+        self._run(path, name, cwd, force=False)
+
+    def _run(self, path, name, cwd, force):
+        def work():
+            args = ["worktree", "remove"]
+            if force:
+                # git requires -f twice to drop a locked worktree.
+                args += ["--force", "--force"]
+            args.append(path)
+            try:
+                _git(args, cwd)
+            except GitError as err:
+                if not force and _needs_force(err.stderr):
+                    sublime.set_timeout(lambda: self._confirm_force(path, name, cwd), 0)
+                else:
+                    self._status(err.message)
+                return
+            self._status('Removed worktree "{}"'.format(name))
+
+        thread = threading.Thread(target=work)
+        thread.daemon = True
+        thread.start()
+
+    def _confirm_force(self, path, name, cwd):
+        if sublime.ok_cancel_dialog(
+            '"{}" has uncommitted changes, untracked files, or is locked.\n\n'
+            "Force removal permanently discards them.".format(name),
+            "Force remove",
+        ):
+            self._run(path, name, cwd, force=True)
+
