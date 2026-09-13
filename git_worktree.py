@@ -30,11 +30,13 @@ def _git_startupinfo():
 
 
 def _first_line(text):
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            return line.replace("fatal: ", "")
-    return ""
+    # git writes progress to stderr too ("Preparing worktree..."), so the first
+    # line is often not the error; prefer the fatal one when it is there.
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    for line in lines:
+        if line.startswith("fatal: "):
+            return line[len("fatal: "):]
+    return lines[0] if lines else ""
 
 
 def _git(args, cwd):
