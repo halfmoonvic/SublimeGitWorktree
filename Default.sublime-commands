@@ -1,6 +1,10 @@
 [
     {
-        "caption": "Git: Switch Worktree",
-        "command": "switch_worktree"
+        "caption": "Git Worktree: Switch",
+        "command": "git_worktree_switch"
+    },
+    {
+        "caption": "Git Worktree: Remove",
+        "command": "git_worktree_remove"
     }
 ]

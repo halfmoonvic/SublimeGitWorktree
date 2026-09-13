@@ -148,7 +148,7 @@ def _parse_worktrees(out):
     return trees
 
 
-class SwitchWorktreeCommand(sublime_plugin.WindowCommand):
+class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
     def is_enabled(self):
         return bool(self.window.folders())
 
