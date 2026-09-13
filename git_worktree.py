@@ -95,6 +95,18 @@ def _same_path(a, b):
     )
 
 
+def _switch_to(window, path):
+    # Only folders[0]["path"] may change: the rest of the dict carries "name",
+    # "folder_exclude_patterns" and friends, and set_project_data writes to disk
+    # immediately with no undo.
+    data = dict(window.project_data() or {})
+    folders = data.get("folders") or [{}]
+    first = dict(folders[0])
+    first["path"] = path
+    data["folders"] = [first] + list(folders[1:])
+    window.set_project_data(data)
+
+
 class Worktree(object):
     def __init__(self, path, branch="", head="", detached=False, bare=False,
                  locked=False, prunable=False, is_main=False):
@@ -159,6 +171,13 @@ def _parse_worktrees(out):
         record[key] = value
     flush()
     return trees
+
+
+def _main_worktree_path(cwd):
+    # The first porcelain record is the main worktree even when git runs from a
+    # linked one, which makes it a stable anchor for relative path templates.
+    trees = _parse_worktrees(_git(["worktree", "list", "--porcelain"], cwd))
+    return trees[0].path if trees else cwd
 
 
 class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
@@ -230,12 +249,7 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
         if tree.prunable:
             self._status("Worktree is prunable; its directory is gone")
             return
-        data = dict(self.window.project_data() or {})
-        folders = data.get("folders") or [{}]
-        first = dict(folders[0])
-        first["path"] = tree.path
-        data["folders"] = [first] + list(folders[1:])
-        self.window.set_project_data(data)
+        _switch_to(self.window, tree.path)
 
 
 def _remove_blocker(tree, current):
