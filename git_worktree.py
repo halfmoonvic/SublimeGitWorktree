@@ -272,6 +272,13 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
                 sublime.command_url("open_dir", {"dir": tree.path}),
                 _pretty_path(tree.path),
             )
+            if tree.branch and not tree.prunable:
+                details += "  " + _link(
+                    sublime.command_url(
+                        "git_worktree_add", {"base": tree.branch}
+                    ),
+                    "[add]",
+                )
             if not _remove_blocker(tree, current):
                 details += "  " + _link(
                     sublime.command_url(
