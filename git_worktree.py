@@ -277,7 +277,7 @@ class GitWorktreeSwitchCommand(sublime_plugin.WindowCommand):
                     sublime.command_url(
                         "git_worktree_remove", {"path": tree.path}
                     ),
-                    "[delete]",
+                    "[remove]",
                     DANGER,
                 )
             items.append(sublime.QuickPanelItem(
