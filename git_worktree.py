@@ -377,6 +377,26 @@ class GitWorktreeRemoveCommand(sublime_plugin.WindowCommand):
         self.window.show_quick_panel(items, on_done, 0, -1, placeholder="Remove worktree")
 
     def _start(self, path, cwd):
+        def work():
+            try:
+                trees = _parse_worktrees(_git(["worktree", "list", "--porcelain"], cwd))
+            except GitError as err:
+                self._status(err.message)
+                return
+            tree = next((t for t in trees if _same_path(t.path, path)), None)
+            # Its directory is already gone, so there is nothing left to confirm
+            # losing. Re-read the state here rather than trusting the caller: the
+            # command is callable with any path, and the panel may be stale.
+            if tree is not None and tree.prunable:
+                self._remove(path, _name_of(path), cwd, force=False)
+                return
+            sublime.set_timeout(lambda: self._confirm(path, cwd), 0)
+
+        thread = threading.Thread(target=work)
+        thread.daemon = True
+        thread.start()
+
+    def _confirm(self, path, cwd):
         name = _name_of(path)
         if not sublime.ok_cancel_dialog(
             'Remove worktree "{}"?\n\n{}'.format(name, _pretty_path(path)),
